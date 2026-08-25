@@ -9,6 +9,7 @@ import {
   Mail,
   UserRound,
   ShieldCheck,
+  UserCheck,
 } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
@@ -30,6 +31,7 @@ export default function Contacts() {
   const [rows, setRows] = useState([
     emptyContact(),
   ]);
+  const [registeredUsers, setRegisteredUsers] = useState([]);
 
   const [loading, setLoading] =
     useState(true);
@@ -47,13 +49,13 @@ export default function Contacts() {
     setLoading(true);
 
     try {
-      const response =
-        await apiRequest('/api/contacts');
+      const [response, regRes] = await Promise.all([
+        apiRequest('/api/contacts'),
+        apiRequest('/api/contacts/registered'),
+      ]);
 
       if (response?.success) {
-
         if (response.data?.length) {
-
           setRows(
             response.data.map(
               (contact) => ({
@@ -74,12 +76,14 @@ export default function Contacts() {
               })
             )
           );
-
         } else {
           setRows([emptyContact()]);
         }
       }
 
+      if (regRes?.success && regRes.data) {
+        setRegisteredUsers(regRes.data);
+      }
     } catch (error) {
       setError(
         'Unable to load emergency contacts.'
@@ -92,6 +96,54 @@ export default function Contacts() {
   useEffect(() => {
     loadContacts();
   }, []);
+
+  const quickAddUser = (user) => {
+    setError('');
+    // Check if user is already added in rows
+    const alreadyInRows = rows.some(
+      (r) => r.phone === user.phone || r.email === user.email
+    );
+    if (alreadyInRows) {
+      setError(`${user.name} (${user.phone}) is already in your contacts list.`);
+      return;
+    }
+
+    // Find an empty row or append a new row
+    const emptyIndex = rows.findIndex((r) => !r.name.trim() && !r.phone.trim());
+    if (emptyIndex !== -1) {
+      setRows((prev) =>
+        prev.map((row, idx) =>
+          idx === emptyIndex
+            ? {
+                ...row,
+                name: user.name,
+                phone: user.phone,
+                email: user.email || '',
+                relationship: 'Guardian',
+              }
+            : row
+        )
+      );
+    } else {
+      if (rows.length >= 10) {
+        setError('You can add up to 10 emergency contacts.');
+        return;
+      }
+      setRows((prev) => [
+        ...prev,
+        {
+          id: '',
+          name: user.name,
+          phone: user.phone,
+          email: user.email || '',
+          relationship: 'Guardian',
+          isSafeCalcUser: false,
+          notificationReady: false,
+        },
+      ]);
+    }
+    setSuccess(`Selected ${user.name} (${user.phone}). Click "Save contacts" below to confirm.`);
+  };
 
   const update = (
     index,
@@ -291,6 +343,28 @@ export default function Contacts() {
         </button>
 
       </div>
+
+      {registeredUsers.length > 0 && (
+        <div style={{ marginBottom: '20px', padding: '16px', background: '#0f172a', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+          <h3 style={{ fontSize: '13px', fontWeight: 'bold', color: '#60a5fa', margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <UserCheck size={16} /> Registered Safe Calc Accounts (Tap to Quick-Add):
+          </h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {registeredUsers.map((u) => (
+              <button
+                key={u._id}
+                type="button"
+                onClick={() => quickAddUser(u)}
+                className="btn outline blue"
+                style={{ minHeight: '32px', padding: '0 10px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <span>👤 <strong>{u.name}</strong> ({u.phone})</span>
+                <Plus size={14} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="form-error page-message">
