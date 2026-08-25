@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Circle, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { CheckCircle2, LocateFixed, MapPin, Route, Search } from 'lucide-react';
+import { CheckCircle2, LocateFixed, MapPin, Route, Search, ShieldAlert, Lock, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 
@@ -90,10 +90,35 @@ export default function Journey() {
   const [searching, setSearching] = useState(false);
   const [message, setMessage] = useState('');
   const [isExactSelected, setIsExactSelected] = useState(false);
+
+  const [activeJourney, setActiveJourney] = useState(null);
+  const [endModalOpen, setEndModalOpen] = useState(false);
+  const [mpinInput, setMpinInput] = useState('');
+  const [ending, setEnding] = useState(false);
+  const [sosTriggering, setSosTriggering] = useState(false);
+
   const timer = useRef(null);
   const abortControllerRef = useRef(null);
 
+  const syncActiveJourney = useCallback(async () => {
+    try {
+      const res = await apiRequest('/api/journey/active');
+      if (res?.success && res.data) {
+        setActiveJourney(res.data);
+        if (res.data.destinationLatitude && res.data.destinationLongitude) {
+          setDest([res.data.destinationLatitude, res.data.destinationLongitude]);
+          setName(res.data.destinationName || '');
+        }
+      } else {
+        setActiveJourney(null);
+      }
+    } catch (err) {
+      console.error('Active journey check error:', err);
+    }
+  }, [apiRequest]);
+
   useEffect(() => {
+    syncActiveJourney();
     navigator.geolocation?.getCurrentPosition(
       (p) => {
         const userPos = [p.coords.latitude, p.coords.longitude];
@@ -107,7 +132,7 @@ export default function Journey() {
       window.clearTimeout(timer.current);
       abortControllerRef.current?.abort();
     };
-  }, []);
+  }, [syncActiveJourney]);
 
   const search = useCallback((value) => {
     setQuery(value);
@@ -171,7 +196,6 @@ export default function Journey() {
       return;
     }
 
-    // If typed without selecting a dropdown item or clicking map, geocode the typed input now
     if (!isExactSelected) {
       setLoading(true);
       try {
@@ -222,6 +246,7 @@ export default function Journey() {
 
       if (!result.success) throw new Error(result.message || 'Unable to start journey.');
       setMessage('Journey started successfully. Your current location is being tracked.');
+      setActiveJourney(result.data);
     } catch (error) {
       setMessage(
         error.code === 1
@@ -230,6 +255,66 @@ export default function Journey() {
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const submitEndJourney = async (e) => {
+    if (e) e.preventDefault();
+    if (!/^\d{4}$/.test(mpinInput.trim())) {
+      setMessage('Please enter your 4-digit Safety MPIN.');
+      return;
+    }
+    setEnding(true);
+    setMessage('');
+    try {
+      const res = await apiRequest('/api/journey/end', {
+        method: 'POST',
+        body: JSON.stringify({ mpin: mpinInput.trim() }),
+      });
+      if (res?.success) {
+        setActiveJourney(null);
+        setEndModalOpen(false);
+        setMpinInput('');
+        setMessage('✅ Travel ended safely. Your journey tracking has stopped.');
+      } else {
+        setMessage(res?.message || 'Incorrect MPIN or unable to end travel.');
+      }
+    } catch (err) {
+      console.error(err);
+      setMessage('Unable to end travel.');
+    } finally {
+      setEnding(false);
+    }
+  };
+
+  const handleTriggerSos = async () => {
+    setSosTriggering(true);
+    setMessage('');
+    try {
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+        });
+      });
+      const res = await apiRequest('/api/alerts/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          triggerType: 'manual_sos',
+        }),
+      });
+      if (res?.success) {
+        setMessage('🚨 SOS Emergency triggered! Emergency contacts have been notified.');
+      } else {
+        setMessage(res?.message || 'Unable to trigger SOS.');
+      }
+    } catch (err) {
+      console.error(err);
+      setMessage('Unable to send SOS.');
+    } finally {
+      setSosTriggering(false);
     }
   };
 
@@ -244,125 +329,194 @@ export default function Journey() {
       </div>
 
       <div className="journey-layout">
-        <form className="panel journey-form" onSubmit={start}>
-          <div className="panel-title">
-            <Route size={18} />
-            <h2>Journey details</h2>
-          </div>
-          {message && (
-            <div
-              className={
-                message.includes('successfully') || message.includes('selected')
-                  ? 'form-success'
-                  : 'form-error'
-              }
-            >
-              {message}
-            </div>
-          )}
-
-          <label>
-            Destination search
-            <div className="search-field">
-              <Search size={16} />
-              <input
-                value={query}
-                onChange={(e) => search(e.target.value)}
-                placeholder="Search exact place, address or landmark…"
-                autoComplete="off"
-              />
-            </div>
-          </label>
-
-          {searching && <div className="search-status">Searching exact locations…</div>}
-
-          {suggestions.length > 0 && (
-            <div className="suggestions">
-              {suggestions.map((suggestion) => (
-                <button
-                  type="button"
-                  key={`${suggestion.lat}-${suggestion.lng}`}
-                  onClick={() => select(suggestion)}
-                >
-                  <MapPin size={15} />
-                  <span>{suggestion.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="preset-row">
-            {['Saveetha Engineering College', 'Chittoor Railway Station', 'Tirupati Airport'].map(
-              (item) => (
-                <button type="button" key={item} onClick={() => search(item)}>
-                  {item}
-                </button>
-              )
-            )}
-          </div>
-
-          <div className="form-grid">
-            <label>
-              Travel mode
-              <select value={mode} onChange={(e) => setMode(e.target.value)}>
-                <option>Ola</option>
-                <option>Uber</option>
-                <option>Rapido</option>
-                <option>Own Vehicle</option>
-                <option>Other</option>
-              </select>
-            </label>
-            <label>
-              Vehicle number
-              <input
-                value={vehicle}
-                onChange={(e) => setVehicle(e.target.value)}
-                placeholder="Optional"
-              />
-            </label>
-            <label>
-              Duration (minutes)
-              <input
-                type="number"
-                min="1"
-                max="1440"
-                value={duration}
-                onChange={(e) => setDuration(Math.max(1, Number(e.target.value) || 1))}
-              />
-            </label>
-            <label>
-              Destination safe radius
-              <div className="range-label">
-                <b>{radius}m</b>
+        {activeJourney ? (
+          <div className="panel journey-form">
+            <div className="panel-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Route size={20} style={{ color: '#3b82f6' }} />
+                <h2>Active Monitored Journey</h2>
               </div>
-              <input
-                type="range"
-                min="50"
-                max="1500"
-                step="50"
-                value={radius}
-                onChange={(e) => setRadius(Number(e.target.value))}
-              />
-            </label>
-          </div>
+              <span className="status-chip active" style={{ fontSize: '11px', textTransform: 'uppercase', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', padding: '4px 10px', borderRadius: '12px', fontWeight: 'bold' }}>
+                {String(activeJourney.status || 'Active').replaceAll('_', ' ')}
+              </span>
+            </div>
 
-          <button
-            type="button"
-            className="btn outline blue full"
-            onClick={chooseCurrent}
-          >
-            <LocateFixed size={16} /> Use current location
-          </button>
-          <button className="btn primary full" disabled={loading}>
-            {loading ? (
-              'Locating / starting…'
-            ) : (
-              <>
-                <CheckCircle2 size={16} /> Start Journey
-              </>
+            {message && (
+              <div className={message.includes('successfully') || message.includes('safely') ? 'form-success' : 'form-error'}>
+                {message}
+              </div>
             )}
-          </button>
-        </form>
+
+            <div style={{ padding: '16px', background: '#0f172a', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.3)', margin: '12px 0' }}>
+              <div style={{ marginBottom: '14px' }}>
+                <span style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 'bold', letterSpacing: '0.5px' }}>Destination</span>
+                <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#f8fafc', margin: '4px 0 0' }}>{activeJourney.destinationName}</h3>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px', color: '#cbd5e1' }}>
+                <div>
+                  <span style={{ fontSize: '10px', color: '#94a3b8', display: 'block', textTransform: 'uppercase', fontWeight: 'bold' }}>Travel Mode</span>
+                  <strong>{activeJourney.travelMode || 'N/A'}</strong>
+                  {activeJourney.vehicleNumber && <span> ({activeJourney.vehicleNumber})</span>}
+                </div>
+                <div>
+                  <span style={{ fontSize: '10px', color: '#94a3b8', display: 'block', textTransform: 'uppercase', fontWeight: 'bold' }}>Expected Arrival</span>
+                  <strong>
+                    {activeJourney.expectedReachTime
+                      ? new Date(activeJourney.expectedReachTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                      : '—'}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
+              <button
+                type="button"
+                className="btn success full"
+                style={{ minHeight: '44px', fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                onClick={() => {
+                  setMpinInput('');
+                  setEndModalOpen(true);
+                }}
+              >
+                <CheckCircle2 size={18} />
+                End Journey
+              </button>
+
+              <button
+                type="button"
+                className="btn danger full"
+                style={{ minHeight: '44px', fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                disabled={sosTriggering}
+                onClick={handleTriggerSos}
+              >
+                <ShieldAlert size={18} />
+                {sosTriggering ? 'Sending SOS…' : 'TRIGGER SOS'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form className="panel journey-form" onSubmit={start}>
+            <div className="panel-title">
+              <Route size={18} />
+              <h2>Journey details</h2>
+            </div>
+            {message && (
+              <div
+                className={
+                  message.includes('successfully') || message.includes('selected')
+                    ? 'form-success'
+                    : 'form-error'
+                }
+              >
+                {message}
+              </div>
+            )}
+
+            <label>
+              Destination search
+              <div className="search-field">
+                <Search size={16} />
+                <input
+                  value={query}
+                  onChange={(e) => search(e.target.value)}
+                  placeholder="Search exact place, address or landmark…"
+                  autoComplete="off"
+                />
+              </div>
+            </label>
+
+            {searching && <div className="search-status">Searching exact locations…</div>}
+
+            {suggestions.length > 0 && (
+              <div className="suggestions">
+                {suggestions.map((suggestion) => (
+                  <button
+                    type="button"
+                    key={`${suggestion.lat}-${suggestion.lng}`}
+                    onClick={() => select(suggestion)}
+                  >
+                    <MapPin size={15} />
+                    <span>{suggestion.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="preset-row">
+              {['Saveetha Engineering College', 'Chittoor Railway Station', 'Tirupati Airport'].map(
+                (item) => (
+                  <button type="button" key={item} onClick={() => search(item)}>
+                    {item}
+                  </button>
+                )
+              )}
+            </div>
+
+            <div className="form-grid">
+              <label>
+                Travel mode
+                <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                  <option>Ola</option>
+                  <option>Uber</option>
+                  <option>Rapido</option>
+                  <option>Own Vehicle</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label>
+                Vehicle number
+                <input
+                  value={vehicle}
+                  onChange={(e) => setVehicle(e.target.value)}
+                  placeholder="Optional"
+                />
+              </label>
+              <label>
+                Duration (minutes)
+                <input
+                  type="number"
+                  min="1"
+                  max="1440"
+                  value={duration}
+                  onChange={(e) => setDuration(Math.max(1, Number(e.target.value) || 1))}
+                />
+              </label>
+              <label>
+                Destination safe radius
+                <div className="range-label">
+                  <b>{radius}m</b>
+                </div>
+                <input
+                  type="range"
+                  min="50"
+                  max="1500"
+                  step="50"
+                  value={radius}
+                  onChange={(e) => setRadius(Number(e.target.value))}
+                />
+              </label>
+            </div>
+
+            <button
+              type="button"
+              className="btn outline blue full"
+              onClick={chooseCurrent}
+            >
+              <LocateFixed size={16} /> Use current location
+            </button>
+            <button className="btn primary full" disabled={loading}>
+              {loading ? (
+                'Locating / starting…'
+              ) : (
+                <>
+                  <CheckCircle2 size={16} /> Start Journey
+                </>
+              )}
+            </button>
+          </form>
+        )}
 
         <div className="panel map-panel">
           <div className="map-toolbar">
@@ -412,6 +566,69 @@ export default function Journey() {
           </div>
         </div>
       </div>
+
+      {/* END JOURNEY MPIN VERIFICATION MODAL */}
+      {endModalOpen && (
+        <div className="modal-backdrop" style={{ zIndex: 1100 }}>
+          <div className="modal" style={{ maxWidth: '400px', textAlign: 'center' }}>
+            <button
+              className="modal-x"
+              onClick={() => {
+                if (ending) return;
+                setEndModalOpen(false);
+                setMpinInput('');
+              }}
+            >
+              ×
+            </button>
+
+            <div className="modal-icon green" style={{ margin: '0 auto 12px' }}>
+              <CheckCircle2 size={24} />
+            </div>
+
+            <h2 style={{ fontSize: '18px', margin: '0 0 6px' }}>Verify MPIN to End Journey</h2>
+            <p style={{ fontSize: '13px', color: '#94a3b8', margin: '0 0 16px' }}>
+              Enter your 4-digit Safety MPIN to confirm that you have reached safely and finish journey tracking.
+            </p>
+
+            <form onSubmit={submitEndJourney} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <input
+                type="password"
+                maxLength={4}
+                inputMode="numeric"
+                value={mpinInput}
+                onChange={(e) => setMpinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                placeholder="••••"
+                autoFocus
+                className="mpin-field"
+                style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: '24px', fontWeight: 'bold', padding: '12px', width: '100%' }}
+              />
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="button"
+                  className="btn outline blue full"
+                  disabled={ending}
+                  onClick={() => {
+                    setEndModalOpen(false);
+                    setMpinInput('');
+                  }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="btn success full"
+                  disabled={ending || mpinInput.length !== 4}
+                >
+                  {ending ? 'Verifying…' : 'Verify & End'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
