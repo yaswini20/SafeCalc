@@ -62,10 +62,14 @@ class ApiService {
 
     _token = prefs.getString('token') ?? '';
 
+    const defaultHost = 'http://10.156.191.243:5000';
     final savedHost = prefs.getString('serverHost');
 
-    if (savedHost != null && savedHost.isNotEmpty) {
+    if (savedHost != null && savedHost.isNotEmpty && !savedHost.contains('172.27.78.243')) {
       _serverHost = savedHost;
+    } else {
+      _serverHost = defaultHost;
+      await prefs.setString('serverHost', defaultHost);
     }
   }
 
