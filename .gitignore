@@ -1,0 +1,28 @@
+# Backend Dependencies
+backend/node_modules/
+
+# Frontend Dependencies and Builds
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Mobile Dependencies and Builds
+mobile/.dart_tool/
+mobile/.flutter-plugins-dependencies
+mobile/.pub-cache/
+mobile/.pub/
+mobile/build/
+mobile/android/app/debug/
+mobile/android/app/profile/
+mobile/android/app/release/
+
+# System / IDE
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.iml
+
+# Credentials and secrets
+.env
+*firebase-service-account.json

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "978140446972",
+    "project_id": "travelsafetysos",
+    "storage_bucket": "travelsafetysos.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:978140446972:android:b9267c54027f76bdde1779",
+        "android_client_info": {
+          "package_name": "com.travelsafetysos.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBRTOgQ2kZZnOiDFlSgPq5zapPEcSRbi7U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
