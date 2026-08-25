@@ -55,6 +55,18 @@ function DashboardMapComponent({
   safePlaces = [],
   selectedLocation = null,
 }) {
+  const [userPos, setUserPos] = useState(null);
+
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (p) => setUserPos([p.coords.latitude, p.coords.longitude]),
+        () => {},
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
+  }, []);
+
   const firstAlert = activeAlerts[0];
   const firstJourney = activeJourneys[0];
 
@@ -80,6 +92,13 @@ function DashboardMapComponent({
         return { lat, lng, zoom: 14 };
       }
     }
+    if (userPos && Number.isFinite(userPos[0])) {
+      return {
+        lat: userPos[0],
+        lng: userPos[1],
+        zoom: 15,
+      };
+    }
     return {
       lat: DEFAULT_CENTER[0],
       lng: DEFAULT_CENTER[1],
@@ -94,6 +113,7 @@ function DashboardMapComponent({
     firstJourney?.currentLongitude,
     firstJourney?.destinationLatitude,
     firstJourney?.destinationLongitude,
+    userPos,
   ]);
 
   return (
@@ -113,6 +133,13 @@ function DashboardMapComponent({
           targetLng={target.lng}
           zoom={target.zoom}
         />
+
+        {/* Current User Location */}
+        {userPos && Number.isFinite(userPos[0]) && (
+          <Marker position={userPos} icon={currentIcon}>
+            <Popup>Your Live Current Location</Popup>
+          </Marker>
+        )}
 
         {/* Active Emergency SOS Alerts */}
         {activeAlerts.map((alert) => {
