@@ -9,6 +9,14 @@ function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function makeDigitRegex(phoneOrDigits) {
+  const digits = String(phoneOrDigits || '').replace(/\D/g, '');
+  if (digits.length < 5) return null;
+  const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
+  const pattern = last10.split('').join('[\\D]*');
+  return new RegExp(pattern + '$');
+}
+
 async function findSafeCalcUser(phone, email, linkedUser) {
   if (linkedUser) {
     const byId = await User.findById(linkedUser).select('_id name email phone fcmToken');
@@ -18,21 +26,33 @@ async function findSafeCalcUser(phone, email, linkedUser) {
   const normalizedPhone = String(phone || '').trim();
   const normalizedEmail = String(email || '').trim().toLowerCase();
 
-  // Primary check: Search by phone number (exact or last 10 digits match)
+  // Primary check: Exact or digit regex search by phone number
   if (normalizedPhone) {
-    const digits = normalizedPhone.replace(/\D/g, '');
-    const phoneClauses = [{ phone: normalizedPhone }];
-    if (digits.length >= 10) {
-      phoneClauses.push({ phone: new RegExp(`${escapeRegex(digits.slice(-10))}$`) });
-    }
-    const userByPhone = await User.findOne({ $or: phoneClauses }).select('_id name email phone fcmToken');
+    const regex = makeDigitRegex(normalizedPhone);
+    const clauses = [{ phone: normalizedPhone }];
+    if (regex) clauses.push({ phone: regex });
+
+    const userByPhone = await User.findOne({ $or: clauses }).select('_id name email phone fcmToken');
     if (userByPhone) return userByPhone;
   }
 
-  // Secondary check: Search by email if provided and phone lookup yielded no match
+  // Secondary check: Search by email if provided
   if (normalizedEmail) {
     const userByEmail = await User.findOne({ email: normalizedEmail }).select('_id name email phone fcmToken');
     if (userByEmail) return userByEmail;
+  }
+
+  // Fallback digit match against all user phones
+  if (normalizedPhone) {
+    const targetDigits = normalizedPhone.replace(/\D/g, '').slice(-10);
+    if (targetDigits.length >= 7) {
+      const allUsers = await User.find({}).select('_id name email phone fcmToken').lean();
+      const match = allUsers.find((u) => {
+        const uDigits = String(u.phone || '').replace(/\D/g, '').slice(-10);
+        return uDigits.length >= 7 && uDigits === targetDigits;
+      });
+      if (match) return match;
+    }
   }
 
   return null;
@@ -95,31 +115,41 @@ router.get('/lookup', protect, async (req, res) => {
 router.post('/', protect, async (req, res) => {
   try {
     const { name, phone, email, relationship, linkedUser } = req.body;
-    if (!name?.trim() || !phone?.trim()) return res.status(400).json({ success: false, message: 'Name and phone number are required.' });
+    if (!name?.trim() || !phone?.trim()) {
+      return res.status(400).json({ success: false, message: 'Name and phone number are required.' });
+    }
 
     const user = await findSafeCalcUser(phone, email, linkedUser);
-    if (!user) {
-      return res.status(400).json({ success: false, message: 'This contact is not a registered Safe Calc user. Please enter a phone number of a registered account.' });
+    if (user && String(user._id) === String(req.user._id)) {
+      return res.status(400).json({ success: false, message: 'You cannot add yourself as an emergency contact.' });
     }
-    if (String(user._id) === String(req.user._id)) return res.status(400).json({ success: false, message: 'You cannot add yourself as an emergency contact.' });
 
-    const duplicate = await Contact.findOne({ user: req.user._id, linkedUser: user._id });
-    if (duplicate) return res.status(409).json({ success: false, message: 'This Safe Calc user is already an emergency contact.' });
+    if (user) {
+      const duplicate = await Contact.findOne({ user: req.user._id, linkedUser: user._id });
+      if (duplicate) {
+        return res.status(409).json({ success: false, message: 'This Safe Calc user is already an emergency contact.' });
+      }
+    }
 
     const contact = await Contact.create({
       user: req.user._id,
-      linkedUser: user._id,
-      name: name.trim() || user.name,
-      phone: user.phone || phone.trim(),
-      email: email?.trim() ? email.trim().toLowerCase() : (user.email || ''),
+      linkedUser: user ? user._id : null,
+      name: name.trim(),
+      phone: phone.trim(),
+      email: email?.trim() ? email.trim().toLowerCase() : (user?.email || ''),
       relationship: relationship?.trim() || '',
     });
 
-    await contact.populate('linkedUser', 'name email phone fcmToken');
+    if (user) {
+      await contact.populate('linkedUser', 'name email phone fcmToken');
+    }
+
     return res.status(201).json({
       success: true,
       data: shape(contact),
-      message: user.fcmToken ? 'Contact added and ready for app notifications.' : 'Contact added. They need to open Safe Calc and allow notifications.',
+      message: user
+        ? (user.fcmToken ? 'Contact added and linked to Safe Calc app notifications.' : 'Contact added. They need to log in on mobile app to enable notifications.')
+        : 'Emergency contact saved successfully.',
     });
   } catch (error) {
     console.error('Create contact error:', error);
@@ -133,22 +163,32 @@ router.put('/:id', protect, async (req, res) => {
     if (!contact) return res.status(404).json({ success: false, message: 'Contact not found.' });
 
     const { name, phone, email, relationship, linkedUser } = req.body;
-    if (!name?.trim() || !phone?.trim()) return res.status(400).json({ success: false, message: 'Name and phone number are required.' });
+    if (!name?.trim() || !phone?.trim()) {
+      return res.status(400).json({ success: false, message: 'Name and phone number are required.' });
+    }
 
     const user = await findSafeCalcUser(phone, email, linkedUser);
-    if (!user) return res.status(400).json({ success: false, message: 'The contact must have a registered Safe Calc account.' });
-    if (String(user._id) === String(req.user._id)) return res.status(400).json({ success: false, message: 'You cannot add yourself as an emergency contact.' });
+    if (user && String(user._id) === String(req.user._id)) {
+      return res.status(400).json({ success: false, message: 'You cannot add yourself as an emergency contact.' });
+    }
 
-    const duplicate = await Contact.findOne({ user: req.user._id, linkedUser: user._id, _id: { $ne: contact._id } });
-    if (duplicate) return res.status(409).json({ success: false, message: 'This Safe Calc user is already an emergency contact.' });
+    if (user) {
+      const duplicate = await Contact.findOne({ user: req.user._id, linkedUser: user._id, _id: { $ne: contact._id } });
+      if (duplicate) {
+        return res.status(409).json({ success: false, message: 'This Safe Calc user is already an emergency contact.' });
+      }
+    }
 
-    contact.linkedUser = user._id;
-    contact.name = name.trim() || user.name;
-    contact.phone = user.phone || phone.trim();
-    contact.email = email?.trim() ? email.trim().toLowerCase() : (user.email || '');
+    contact.linkedUser = user ? user._id : null;
+    contact.name = name.trim();
+    contact.phone = phone.trim();
+    contact.email = email?.trim() ? email.trim().toLowerCase() : (user?.email || '');
     contact.relationship = relationship?.trim() || '';
     await contact.save();
-    await contact.populate('linkedUser', 'name email phone fcmToken');
+
+    if (user) {
+      await contact.populate('linkedUser', 'name email phone fcmToken');
+    }
 
     return res.json({ success: true, data: shape(contact) });
   } catch (error) {

@@ -461,10 +461,7 @@ export default function Contacts() {
 
               {!contact.id && (
                 <div className="form-warning">
-                  The backend will verify that
-                  this phone number belongs to a
-                  registered Safe Calc account
-                  before saving.
+                  Safe Calc accounts matching this phone number will receive mobile app push notifications.
                 </div>
               )}
 
