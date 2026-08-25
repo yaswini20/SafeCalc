@@ -120,36 +120,41 @@ router.post('/', protect, async (req, res) => {
     }
 
     const user = await findSafeCalcUser(phone, email, linkedUser);
-    if (user && String(user._id) === String(req.user._id)) {
-      return res.status(400).json({ success: false, message: 'You cannot add yourself as an emergency contact.' });
+
+    let contact = null;
+    if (user) {
+      contact = await Contact.findOne({ user: req.user._id, linkedUser: user._id });
+    }
+    if (!contact) {
+      contact = await Contact.findOne({ user: req.user._id, phone: phone.trim() });
     }
 
-    if (user) {
-      const duplicate = await Contact.findOne({ user: req.user._id, linkedUser: user._id });
-      if (duplicate) {
-        return res.status(409).json({ success: false, message: 'This Safe Calc user is already an emergency contact.' });
-      }
+    if (contact) {
+      contact.linkedUser = user ? user._id : contact.linkedUser;
+      contact.name = name.trim();
+      contact.phone = phone.trim();
+      contact.email = email?.trim() ? email.trim().toLowerCase() : (user?.email || contact.email || '');
+      contact.relationship = relationship?.trim() || contact.relationship || '';
+      await contact.save();
+    } else {
+      contact = await Contact.create({
+        user: req.user._id,
+        linkedUser: user ? user._id : null,
+        name: name.trim(),
+        phone: phone.trim(),
+        email: email?.trim() ? email.trim().toLowerCase() : (user?.email || ''),
+        relationship: relationship?.trim() || '',
+      });
     }
 
-    const contact = await Contact.create({
-      user: req.user._id,
-      linkedUser: user ? user._id : null,
-      name: name.trim(),
-      phone: phone.trim(),
-      email: email?.trim() ? email.trim().toLowerCase() : (user?.email || ''),
-      relationship: relationship?.trim() || '',
-    });
-
-    if (user) {
+    if (contact.linkedUser) {
       await contact.populate('linkedUser', 'name email phone fcmToken');
     }
 
     return res.status(201).json({
       success: true,
       data: shape(contact),
-      message: user
-        ? (user.fcmToken ? 'Contact added and linked to Safe Calc app notifications.' : 'Contact added. They need to log in on mobile app to enable notifications.')
-        : 'Emergency contact saved successfully.',
+      message: 'Emergency contact saved successfully.',
     });
   } catch (error) {
     console.error('Create contact error:', error);
@@ -168,16 +173,6 @@ router.put('/:id', protect, async (req, res) => {
     }
 
     const user = await findSafeCalcUser(phone, email, linkedUser);
-    if (user && String(user._id) === String(req.user._id)) {
-      return res.status(400).json({ success: false, message: 'You cannot add yourself as an emergency contact.' });
-    }
-
-    if (user) {
-      const duplicate = await Contact.findOne({ user: req.user._id, linkedUser: user._id, _id: { $ne: contact._id } });
-      if (duplicate) {
-        return res.status(409).json({ success: false, message: 'This Safe Calc user is already an emergency contact.' });
-      }
-    }
 
     contact.linkedUser = user ? user._id : null;
     contact.name = name.trim();
@@ -186,7 +181,7 @@ router.put('/:id', protect, async (req, res) => {
     contact.relationship = relationship?.trim() || '';
     await contact.save();
 
-    if (user) {
+    if (contact.linkedUser) {
       await contact.populate('linkedUser', 'name email phone fcmToken');
     }
 
