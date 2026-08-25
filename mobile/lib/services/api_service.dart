@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ApiService {
   // Default server host IP.
   // Change this to match your laptop Wi-Fi IP (ipconfig).
-  static String _serverHost = 'http://172.27.78.243:5000';
+  static String _serverHost = 'http://10.156.191.243:5000';
 
   static String _token = '';
 
