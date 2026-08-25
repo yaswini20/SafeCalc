@@ -61,29 +61,6 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-router.get('/registered', protect, async (req, res) => {
-  try {
-    const users = await User.find({ _id: { $ne: req.user._id } })
-      .select('_id name email phone fcmToken')
-      .sort({ name: 1 })
-      .lean();
-
-    return res.json({
-      success: true,
-      data: users.map((user) => ({
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        notificationReady: Boolean(user.fcmToken),
-      })),
-    });
-  } catch (error) {
-    console.error('Fetch registered users error:', error);
-    return res.status(500).json({ success: false, message: 'Unable to load registered users.' });
-  }
-});
-
 router.get('/lookup', protect, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
